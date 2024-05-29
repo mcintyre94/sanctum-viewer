@@ -2,19 +2,18 @@ import { useWallet } from "@wallet-standard/react-core";
 import { useMemo } from "react";
 import { useWalletLocalStorage } from "../hooks/useWalletLocalStorage";
 import { WalletMultiButton } from "../components/WalletMultiButton";
-import { Box, Button, Container, Flex, Loader, MantineColor, SimpleGrid, Stack, Table, TableData, Text, TextInput } from "@mantine/core";
+import { Box, Button, Container, Flex, Loader, MantineColor, SimpleGrid, Stack, Table, TableData, Text } from "@mantine/core";
 import { shortAddress } from "../components/AccountLabel";
 import { ActionFunctionArgs, Form, useActionData, useNavigation } from "react-router-dom";
-import { Address, LamportsUnsafeBeyond2Pow53Minus1, createSolanaRpc, isAddress, mainnet } from "@solana/web3.js";
-import { displayLamportsAsSol } from "../utils/lamports";
+import { Address, isAddress } from "@solana/web3.js";
 import { PieChart, PieChartCell } from "@mantine/charts";
 import { queryClient } from '../queries/queryClient';
-import { getBalance, getBalanceQueryKey } from "../queries/getBalance";
 import AccountCheckboxes from "../components/AccountCheckboxes";
+import { getSanctumExp, getSanctumExpQueryKey } from "../queries/getSanctumExp";
 
-type AddressWithBalance = {
+type AddressWithExp = {
     address: Address,
-    balanceLamports: LamportsUnsafeBeyond2Pow53Minus1
+    exp: bigint | undefined
 };
 
 type ActionResponse = {
@@ -22,19 +21,11 @@ type ActionResponse = {
     error: string
 } | {
     kind: 'success',
-    data: AddressWithBalance[]
+    data: AddressWithExp[]
 }
 
 export async function action({ request }: ActionFunctionArgs): Promise<ActionResponse> {
     const formData = await request.formData();
-    const rpcAddress = formData.get('rpc');
-    if (!rpcAddress) {
-        return {
-            kind: 'error',
-            error: 'No RPC address'
-        }
-    }
-    const rpc = createSolanaRpc(mainnet(rpcAddress.toString()));
     const addresses = formData.getAll('addresses').map(a => a.toString()).filter(a => isAddress(a)) as Address[];
     if (addresses.length === 0) {
         return {
@@ -43,17 +34,17 @@ export async function action({ request }: ActionFunctionArgs): Promise<ActionRes
         }
     }
 
-    const data: AddressWithBalance[] = []
-    // one at a time to avoid rate limits
+    const data: AddressWithExp[] = []
+    // one at a time to be polite
     for (const address of addresses) {
-        const balanceLamports = await queryClient.fetchQuery({
-            queryKey: getBalanceQueryKey(address),
-            queryFn: () => getBalance(rpc, address, request.signal)
+        const totalExp = await queryClient.fetchQuery({
+            queryKey: getSanctumExpQueryKey(address),
+            queryFn: () => getSanctumExp(address, request.signal)
         })
-        data.push({ address, balanceLamports })
+        data.push({ address, exp: totalExp })
     }
 
-    data.sort((a, b) => Number(b.balanceLamports - a.balanceLamports));
+    data.sort((a, b) => Number((b.exp ?? 0n) - (a.exp ?? 0n)));
 
     return {
         kind: 'success',
@@ -65,11 +56,11 @@ const colors: MantineColor[] = ["red.6", "blue.6", "yellow.6", "green.6", "grape
 
 type TableRow = {
     address: Address,
-    balanceLamports: LamportsUnsafeBeyond2Pow53Minus1 | undefined
+    exp: bigint | undefined | 'loading'
 };
 
 function makeTableRowData(
-    fetchedData: AddressWithBalance[],
+    fetchedData: AddressWithExp[],
     pendingAddresses: Address[] | undefined,
 ): TableRow[] {
     const isPending = pendingAddresses !== undefined;
@@ -87,7 +78,7 @@ function makeTableRowData(
 
     const pendingRows: TableRow[] = (filteredPendingAddresses ?? []).map(address => ({
         address,
-        balanceLamports: undefined
+        exp: 'loading'
     }));
 
     return (filteredFetchedData as TableRow[]).concat(...pendingRows);
@@ -122,23 +113,23 @@ export default function Root() {
         head: [
             "",
             hasLabels ? "Label" : "Address",
-            "Unstaked SOL"
+            "Total Exp"
         ],
-        body: tableRowData.map(({ address, balanceLamports }, index) => [
+        body: tableRowData.map(({ address, exp }, index) => [
             // Note: not using ColorSwatch because it doesn't work with theme colors
-            balanceLamports === undefined || colors[index] === undefined ? "" : <Box h={10} w={10} style={{ borderRadius: "var(--mantine-radius-md)" }} bg={colors[index]} />,
+            exp === undefined || exp === 'loading' || colors[index] === undefined ? "" : <Box h={10} w={10} style={{ borderRadius: "var(--mantine-radius-md)" }} bg={colors[index]} />,
             addressLabels[address.toString()] ?? address,
-            balanceLamports ? `◎${displayLamportsAsSol(balanceLamports)}` : <Loader size='xs' />
+            exp === 'loading' ? <Loader size='xs' /> : exp ? `${exp.toLocaleString()} Exp` : <Text c='gray.6'>-</Text>
         ])
     }
 
     const pieChartData: PieChartCell[] = useMemo(() => {
         return tableRowData
-            .filter(({ balanceLamports }) => balanceLamports !== undefined)
+            .filter(({ exp }) => typeof exp === 'bigint')
             .slice(0, 10)
-            .map(({ address, balanceLamports }, index) => ({
+            .map(({ address, exp }, index) => ({
                 name: addressLabels[address] ?? shortAddress(address),
-                value: Number(balanceLamports),
+                value: Number(exp),
                 color: colors[index]
             }))
     }, [tableRowData, addressLabels]);
@@ -155,8 +146,6 @@ export default function Root() {
                     <Form method="POST">
 
                         <Flex direction='column' gap='lg' align='flex-start'>
-                            <TextInput miw={300} required label="RPC Address" placeholder="https://mainnet.helius-rpc.com?api-key=" name='rpc' />
-
                             {accounts.length > 0 ?
                                 <AccountCheckboxes accounts={accounts} /> :
                                 <Text> Connect a wallet to get started...</Text>
@@ -181,7 +170,7 @@ export default function Root() {
                                     withTooltip
                                     tooltipProps={{ wrapperStyle: { background: 'white', color: 'darkblue', padding: 4 } }}
                                     tooltipDataSource='segment'
-                                    valueFormatter={n => `${displayLamportsAsSol(BigInt(n))} SOL`}
+                                    valueFormatter={n => `${n.toLocaleString()} exp`}
                                     style={{ width: '100%', height: '100%' }}
                                 /> : null
                         }

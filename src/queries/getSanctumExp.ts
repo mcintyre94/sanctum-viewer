@@ -12,13 +12,13 @@ type SanctumApiResponse = {
 export async function getSanctumExp(
   address: Address,
   abortSignal: AbortSignal
-): Promise<bigint | undefined> {
+): Promise<bigint | null> {
   const sanctumApiUrl = `https://wonderland-api2.ngrok.dev/s1/user/full?pk=${address}`;
   const response = await fetch(sanctumApiUrl, { signal: abortSignal });
 
   if (response.status === 404) {
     // no Wonderland for this address
-    return undefined;
+    return null;
   }
 
   if (response.status !== 200) {

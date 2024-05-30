@@ -4,16 +4,18 @@ import { useWalletLocalStorage } from "../hooks/useWalletLocalStorage";
 import { WalletMultiButton } from "../components/WalletMultiButton";
 import { Box, Button, Container, Flex, Loader, MantineColor, SimpleGrid, Stack, Table, TableData, Text } from "@mantine/core";
 import { shortAddress } from "../components/AccountLabel";
-import { ActionFunctionArgs, Form, useActionData, useNavigation } from "react-router-dom";
+import { ActionFunctionArgs, Form, useActionData } from "react-router-dom";
 import { Address, isAddress } from "@solana/web3.js";
 import { PieChart, PieChartCell } from "@mantine/charts";
 import { queryClient } from '../queries/queryClient';
 import AccountCheckboxes from "../components/AccountCheckboxes";
 import { getSanctumExp, getSanctumExpQueryKey } from "../queries/getSanctumExp";
+import { useWalletAccounts } from "../hooks/useWalletAccounts";
+import { usePendingAddresses } from "../hooks/usePendingAddresses";
 
 type AddressWithExp = {
     address: Address,
-    exp: bigint | undefined
+    exp: bigint | null
 };
 
 type ActionResponse = {
@@ -84,22 +86,14 @@ function makeTableRowData(
     return (filteredFetchedData as TableRow[]).concat(...pendingRows);
 }
 
-export default function Root() {
+export default function Exp() {
     const { isLoadingStoredWallet } = useWalletLocalStorage();
     const actionData = useActionData() as Awaited<ReturnType<typeof action>>;
 
     const { wallet } = useWallet();
-    const accounts = useMemo(() => wallet?.accounts ?? [], [wallet?.accounts]);
-    const addressLabels = useMemo(() =>
-        Object.fromEntries(accounts.map(a => ([a.address, a.label]))), [accounts]
-    )
-    const hasLabels = useMemo(() => Object.values(addressLabels).filter(l => l !== undefined).length > 0, [addressLabels]);
+    const { accounts, addressLabels, hasLabels } = useWalletAccounts(wallet);
 
-    const navigation = useNavigation();
-    const pendingAddresses = useMemo(() => {
-        const addresses = navigation.formData?.getAll('addresses');
-        return addresses?.map(a => a.toString() as Address)
-    }, [navigation.formData])
+    const pendingAddresses = usePendingAddresses();
 
     const fetchedData = useMemo(() => {
         return actionData?.kind === 'success' ? actionData.data : []
